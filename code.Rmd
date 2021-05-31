@@ -1,0 +1,283 @@
+---
+title: "national correlation"
+author: "Anthony"
+date: "4/13/2021"
+output: html_document
+---
+
+#clear the memory
+```{r}
+rm(list=ls())
+```
+
+#library
+```{r}
+library(ggplot2)
+library(tidyr)
+library(corrplot)
+library(dplyr)
+library(date)
+library(lubridate)
+library(tidyverse)
+library(knitr)
+library(ggpubr)
+```
+
+#set up directory
+```{r}
+setwd(".../github")
+list.files()
+```
+
+#load data
+```{r}
+ssd<-read.csv("national_ssd.csv")
+anxiety<-read.csv("anxiety_nation.csv")
+depression<-read.csv("depression_nation.csv")
+pres<-read.csv("prescription_nation.csv")
+nssp<-read.csv("NSSP.csv")
+```
+
+#calculate report rate of anxiety, depression and mental health 
+```{r}
+anxiety$census_pA3A4<-(anxiety$A3+anxiety$A4)/(anxiety$A1+anxiety$A2+anxiety$A3+anxiety$A4)
+depression$census_pD3D4<-(depression$A3+depression$A4)/(depression$A1+depression$A2+depression$A3+depression$A4)
+pres$ap<-pres$aY/(pres$aY+pres$aN)
+pres$bp<-pres$bY/(pres$bY+pres$bN)
+pres$cp<-pres$cY/(pres$cY+pres$cN)
+
+#sort
+anxiety_sort<-anxiety[order(anxiety$week),]
+depression_sort<-depression[order(depression$week),]
+pres_sort<-pres[order(pres$week),]
+```
+
+#SAME WEEK
+##match with Google search(same week)
+```{r}
+anxiety_sort$time<-ifelse(anxiety_sort$week<13,anxiety_sort$week+16,
+                          ifelse(anxiety_sort$week>21,anxiety_sort$week*2-43,anxiety_sort$week*2+8))
+depression_sort$time<-ifelse(depression_sort$week<13,depression_sort$week+16,
+                             ifelse(depression_sort$week>21,depression_sort$week*2-43,depression_sort$week*2+8))
+pres_sort$time<-ifelse(pres_sort$week<13,pres_sort$week+16,
+                       ifelse(pres_sort$week>21,pres_sort$week*2-43,pres_sort$week*2+8))
+
+#subset data ssd
+symptom<-c("symptom.Anxiety","symptom.Depression","symptom.Motion.sickness",
+           "symptom.Suicidal.ideation","date")
+ssd_new<-ssd[symptom]
+ssd_new$time<-mdy(ssd_new$date)
+ssd_new$week<-floor_date(ssd_new$time,"week")
+
+#get week number from date
+ssd_new$time_new<-strftime(ssd_new$week,format="%V")
+ssd_new$time_new<-as.numeric(ssd_new$time_new)
+#cut off date
+ssd_new<-ssd_new[-53,]
+ssd_new<-ssd_new[-66,]
+```
+
+#deal with nssp data
+```{r}
+ed<-c("Total.Number.of.ED.Visits.by.Week","Disaster.Related.Mental.Health.Age.10..Count",
+           "Suicide.Attempt.Age.10..Count","All.Drug.Overdose.Count.Age.10.",
+           "Opioid.Overdose.Count.Age.10.","Intimate.Partner.Violence.Age.18..Count","Total.ED.Visits.by.Week.Age.0.17","Suspected.Child.Abuse.and.Neglect.Age.0.17.Count","Week.Beginning.Date")
+nssp_new<-nssp[ed]
+
+nssp_new$time<-dmy(nssp_new$Week.Beginning.Date)
+nssp_new$week<-floor_date(nssp_new$time,"week")
+nssp_plot<-nssp_new %>% select(Disaster.Related.Mental.Health.Age.10..Count,Suicide.Attempt.Age.10..Count,time)
+
+```
+
+#deal with pulse data
+```{r}
+ssd_pulse<-ssd_new[-1:-13,]
+ssd_pulse<-ssd_pulse %>% filter(year(time) %in% c(2020,2021))
+pulse_anxiety<-merge(ssd_pulse,anxiety_sort,by.x = "time_new", by.y = "time",all.x = FALSE,all.y = TRUE)
+pulse_depression<-merge(ssd_pulse,depression_sort,by.x = "time_new", by.y = "time",all.x = FALSE,all.y = TRUE)
+pulse_pres<-merge(ssd_pulse,pres_sort,by.x = "time_new", by.y = "time",all.x = FALSE,all.y = TRUE)
+pulse_anxiety<-pulse_anxiety[,-1:-6]
+pulse_anxiety<-pulse_anxiety[,-2:-8]
+pulse_depression<-pulse_depression[,-1:-6]
+pulse_depression<-pulse_depression[,-2:-8]
+pulse_pres<-pulse_pres[,-1:-6]
+pulse_pres<-pulse_pres[,-2:-12]
+pulse<-merge(pulse_anxiety,pulse_depression,by.x = "time",by.y = "time")
+pulse<-merge(pulse,pulse_pres,by.x = "time",by.y = "time",all.x = TRUE)
+pulse<-pulse %>% rename(Anxiety=census_pA3A4,Depression=census_pD3D4,
+                        "Medication"=ap,"Therapy"=bp,
+                        "Needed treatment"=cp)
+```
+
+
+prepare data for figure 1
+```{r}
+#delete motion sickness
+ssd_new<-ssd_new[,-3]
+
+#merge ssd_new, pulse, nssp_plot to ensure the same x axis
+m_data<-merge(ssd_new,nssp_plot, by.x = "week", by.y = "time", all.x = TRUE)
+m_data<-merge(m_data,pulse, by.x = "time", by.y = "time",all.x = TRUE)
+
+#reconstruct ssd_new, pulse, nssp_plot
+ssd_new<-m_data[,c(2:5)]
+pulse<-m_data[,c(2,10:14)]
+nssp_plot<-m_data[,c(2,8,9)]
+
+```
+
+interpolate pulse data with Excel 
+```{r}
+#interpolate pulse data
+#write.csv(pulse,"pulse.csv")
+#load pulse data
+pulse_new<-read.csv("pulse.csv")
+pulse_new<-pulse_new[,-1]
+pulse_new$week<-mdy(pulse_new$week)
+```
+
+plot figures
+```{r}
+#plot figure 1a for SSD
+a<-ggplot(ssd_new,aes(x=week))
+a<-a+geom_line(aes(y=symptom.Anxiety,color="Anxiety"),size=1)+geom_line(aes(y=symptom.Depression,color="Depression"),size=1)+
+  geom_line(aes(y=symptom.Suicidal.ideation*5,color="Sucidal Ideation"),size=1)+
+  scale_y_continuous(sec.axis = sec_axis(~./5,name = "Normalized Google Search \n for Suicidal Ideation"))+
+  labs(y="Normalized Google Search \n for Anxiety and Depression", x="Time", color="Search Terms")+theme_bw()+
+  theme(axis.text.x = element_text(color = "grey20", size =16),
+        axis.text.y = element_text(color = "grey20", size = 16),  
+        axis.title.x = element_text(color = "grey20", size = 16),
+        axis.title.y = element_text(color = "grey20", size = 14),
+        legend.text=element_text(size=16),
+        legend.title = element_text(size=18))+
+  scale_x_date(date_labels = "%Y-%m")
+
+#plot figure 1b for NSSP
+b<-ggplot(nssp_plot,aes(x=week))
+b<-b+geom_line(aes(y=Disaster.Related.Mental.Health.Age.10..Count,color="Disaster Related Mental Health"),size=1)+
+  geom_line(aes(y=Suicide.Attempt.Age.10..Count*8,color="Sucidal Attempt"),size=1)+
+  scale_y_continuous(sec.axis = sec_axis(~./8,name = "Number of ED Visit \n for Suicidal Attempt"))+
+  labs(y="Number of ED visit for \n Disaster Related Mental Health", x="Time", color="Cause of ED Visit")+theme_bw()+
+   theme(axis.text.x = element_text(color = "grey20", size =16),
+        axis.text.y = element_text(color = "grey20", size = 16),  
+        axis.title.x = element_text(color = "grey20", size = 16),
+        axis.title.y = element_text(color = "grey20", size = 14),
+        legend.text=element_text(size=16),
+        legend.title = element_text(size=18))+
+  scale_x_date(date_labels = "%Y-%m")
+
+#plot figure 1C for pulse
+c<-ggplot(pulse_new,aes(x=week))
+c<-c+geom_line(aes(y=Anxiety,color="Anxiety"),size=1)+geom_line(aes(y=Depression,color="Depression"),size=1)+geom_line(aes(y=Medication,color="Take Medication"),size=1)+geom_line(aes(y=Therapy,color="Receive Therapy"),size=1)+geom_line(aes(y=Needed.treatment,color="Unmet Need"),size=1)+xlab("Time")+ylab("Proportion of Reporting")+scale_x_date(date_labels = "%Y-%m")+scale_color_discrete(name="Reported Item",labels=c("Anxiety","Depression","Take Medication","Receive Therapy","Unmet Need"))+theme_bw()+ theme(axis.text.x = element_text(color = "grey20", size =16),
+        axis.text.y = element_text(color = "grey20", size = 16),  
+        axis.title.x = element_text(color = "grey20", size = 16),
+        axis.title.y = element_text(color = "grey20", size = 14),
+        legend.text=element_text(size=16),
+        legend.title = element_text(size=18))
+
+png(filename="figure1.png",width=1000, height=700)
+ggarrange(a, c, b, 
+          labels = c("A", "B", "C"),
+          ncol = 1, nrow = 3, align="v")
+dev.off()
+
+
+```
+
+Make overall dataset for SSD, NSSP and pulse survey
+```{r}
+table<-merge(pulse,ssd_new,by.x = "week", by.y = "week",all=TRUE)
+table<-merge(table,nssp_new,by.x = "week",by.y = "week",all=TRUE)
+table<-table[,-10]
+table<-table[,-12:-18]
+table<-table %>% rename("Pulse Anxiety"=Anxiety,
+                        "Pulse Depression"=Depression,
+                        "Pulse Medication"=Medication,
+                        "Pulse Therapy"=Therapy,
+                        "Pulse Needed Treatment"="Needed treatment",
+                        "SSD Anxiety"=symptom.Anxiety,
+                        "SSD Depression"=symptom.Depression,
+                        "SSD Suicidal Ideation"=symptom.Suicidal.ideation,
+                        "NSSP Disaster related mental health ED visits"=Disaster.Related.Mental.Health.Age.10..Count,
+                        "NSSP Suicidal attempt ED visits"=Suicide.Attempt.Age.10..Count)
+write_csv(table, "SSD_Pulse_NSSP.csv")
+```
+
+#prepare correlation
+```{r}
+library(GGally)
+rm(list=ls())
+table<-read.csv("SSD_Pulse_NSSP.csv")
+cor_df<-table %>% select(-c("week"))
+cor_df<-cor_df %>% rename("Pulse Anxiety"=Pulse.Anxiety,
+                        "Pulse Depression"=Pulse.Depression,
+                        "Pulse Medication"=Pulse.Medication,
+                        "Pulse Therapy"=Pulse.Therapy,
+                        "Pulse Needed Treatment"=Pulse.Needed.Treatment,
+                        "SSD Anxiety"=SSD.Anxiety,
+                        "SSD Depression"=SSD.Depression,
+                        "SSD Suicidal Ideation"=SSD.Suicidal.Ideation,
+                        "NSSP Disaster related mental health ED visits"=NSSP.Disaster.related.mental.health.ED.visits,
+                        "NSSP Suicidal attempt ED visits"=NSSP.Suicidal.attempt.ED.visits)
+cor_df<-cor_df[,c(10,9,5,4,3,2,1,8,7,6)]
+```
+
+
+#correlation using ggcorr
+```{r}
+library(ggcorrplot)
+png(filename="figure2a.png",width=1000, height=800)
+ggcorr(cor_df, method = c("pairwise", "pearson"),label = TRUE) 
+dev.off()
+
+```
+
+#correlation using ggcorrplot
+```{r}
+cormat <- round(cor(cor_df,use="pairwise.complete.obs", method = "pearson"),2)
+png(filename="figure2b.png",width=1000, height=800)
+ggcorrplot(
+  cormat, hc.order = FALSE, type = "upper",lab=TRUE,
+  legend.title = "Pearson Correlation"
+  )
+dev.off()
+
+```
+
+#figure 3 scatterplot
+```{r}
+rm(list=ls())
+table<-read.csv("SSD_Pulse_NSSP.csv")
+s1<-ggplot(table, aes(x=SSD.Anxiety, y=NSSP.Suicidal.attempt.ED.visits)) + 
+  geom_point()+xlab("Normalized Google Search for Anxiety")+ylab("Suicidal Attempt ED Visits in NSSP")+theme_bw()+geom_smooth(method=lm)
+s2<-ggplot(table, aes(x=SSD.Anxiety, y=Pulse.Therapy)) + 
+  geom_point()+xlab("Normalized Google Search for Anxiety")+ylab("Proportion of respondents \n who received mental therapy in Pulse Survey")+theme_bw()+geom_smooth(method=lm)
+s3<-ggplot(table, aes(x=SSD.Depression, y=Pulse.Therapy)) + 
+  geom_point()+geom_point()+xlab("Normalized Google Search for Depression")+ylab("Proportion of respondents \n who received mental therapy in Pulse Survey")+theme_bw()+geom_smooth(method=lm)
+s4<-ggplot(table, aes(x=SSD.Depression, y=Pulse.Medication)) + 
+  geom_point()+xlab("Normalized Google Search for Depression")+ylab("Proportion of respondents who take medication \n to help emotion in Pulse Survey")+theme_bw()+
+  geom_smooth(method=lm)
+
+png(filename="figure3.png",width=1000, height=800)
+ggarrange(s1, s2, s3,s4, 
+          labels = c("A", "B", "C","D"),
+          ncol = 2, nrow = 2)
+dev.off()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
