@@ -1,7 +1,7 @@
 ---
-title: "national correlation"
+title: "SSD project"
 author: "Anthony"
-date: "4/13/2021"
+date: "06/01/2021"
 output: html_document
 ---
 
@@ -25,7 +25,7 @@ library(ggpubr)
 
 #set up directory
 ```{r}
-setwd(".../github")
+setwd(".../SSD_project")
 list.files()
 ```
 
